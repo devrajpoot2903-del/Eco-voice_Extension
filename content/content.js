@@ -13,3 +13,5 @@
  */
 
 // No DOM interaction implemented yet — architecture placeholder.
+
+console.log("EcoVoice Extension V1 Loaded Successfully");

@@ -12,7 +12,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
+      "matches": ["https://www.apple.com/*"],
       "js": ["content/content.js"]
     }
   ],
