@@ -1,0 +1,18 @@
+/**
+ * commandParser.js — EcoVoice Command Engine  (Phase 3)
+ * -------------------------------------------------------
+ * Rule-based natural language parser. No external AI APIs are used.
+ *
+ * Architecture is intentionally modular so a future AI integration can
+ * replace `detectIntent` + `runExtractors` with API calls while keeping the
+ * same public `parseCommand` interface.
+ *
+ * Pipeline:
+ *   1. Normalise raw transcript text.
+ *   2. Run intent-detection rules in priority order (first match wins).
+ *   3. For a matched intent, run extraction rules to pull the payload.
+ *   4. Optionally detect priority signal (high / normal) embedded in the text.
+ *   5. Return a structured result object.
+ *
+ * Moved to src/parser/ from src/services/ during EcoVoice Extension V1 migration.
+ */

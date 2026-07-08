@@ -1,0 +1,21 @@
+/* popup.css — EcoVoice Extension popup styles */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: system-ui, sans-serif;
+  font-size: 14px;
+  min-width: 240px;
+  padding: 16px;
+  background: #fff;
+  color: #111;
+}
+
+h1 {
+  font-size: 16px;
+  font-weight: 600;
+}
