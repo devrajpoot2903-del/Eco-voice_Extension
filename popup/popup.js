@@ -34,6 +34,18 @@ document.addEventListener('DOMContentLoaded', () => {
       
       // Update UI
       outputBox.textContent = JSON.stringify(parsedObject, null, 2);
+
+      // Send to active tab content script
+      if (typeof chrome !== 'undefined' && chrome.tabs) {
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+          if (tabs[0] && tabs[0].id) {
+            chrome.tabs.sendMessage(tabs[0].id, {
+              type: 'ECOVOICE_COMMAND',
+              payload: parsedObject
+            });
+          }
+        });
+      }
     },
     onError: (err) => {
       console.error("Speech Recognition Error:", err);

@@ -15,3 +15,12 @@
 // No DOM interaction implemented yet — architecture placeholder.
 
 console.log("EcoVoice Extension V1 Loaded Successfully");
+
+// Phase 3: Receive parsed JSON intent from the popup
+if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.type === 'ECOVOICE_COMMAND') {
+      console.log("Received EcoVoice Command:\n" + JSON.stringify(message.payload, null, 2));
+    }
+  });
+}
