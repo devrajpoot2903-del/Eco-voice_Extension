@@ -8,6 +8,22 @@
   </head>
   <body>
     <h1>EcoVoice Extension V1</h1>
-    <script src="popup.js"></script>
+    
+    <div class="status-panel">
+      <p>Connection: <span id="conn-status">Active</span></p>
+      <p>Status: <span id="mic-status">IDLE</span></p>
+    </div>
+
+    <div class="controls">
+      <button id="btn-start">Start Listening</button>
+      <button id="btn-stop" disabled>Stop Listening</button>
+    </div>
+
+    <div class="output-panel">
+      <h3>Output</h3>
+      <pre id="output-box">Waiting for voice command...</pre>
+    </div>
+
+    <script type="module" src="popup.js"></script>
   </body>
 </html>

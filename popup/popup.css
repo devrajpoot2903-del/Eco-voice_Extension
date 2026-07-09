@@ -9,13 +9,97 @@
 body {
   font-family: system-ui, sans-serif;
   font-size: 14px;
-  min-width: 240px;
+  min-width: 320px;
   padding: 16px;
-  background: #fff;
+  background: #f9fafb;
   color: #111;
 }
 
 h1 {
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 600;
+  margin-bottom: 16px;
+  color: #111827;
+}
+
+.status-panel {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  padding: 12px;
+  border-radius: 6px;
+  margin-bottom: 16px;
+}
+
+.status-panel p {
+  margin-bottom: 4px;
+  font-size: 13px;
+  color: #4b5563;
+}
+
+.status-panel p:last-child {
+  margin-bottom: 0;
+}
+
+#conn-status {
+  color: #059669;
+  font-weight: 600;
+}
+
+#mic-status {
+  font-weight: 600;
+  color: #3b82f6;
+}
+
+.controls {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+button {
+  flex: 1;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+#btn-start {
+  background: #3b82f6;
+  color: white;
+}
+
+#btn-stop {
+  background: #ef4444;
+  color: white;
+}
+
+.output-panel {
+  background: #1f2937;
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.output-panel h3 {
+  color: #9ca3af;
+  font-size: 12px;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+#output-box {
+  color: #10b981;
+  font-family: monospace;
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-all;
 }

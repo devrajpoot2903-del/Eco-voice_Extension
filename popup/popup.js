@@ -1,12 +1,53 @@
-/**
- * popup.js — EcoVoice Extension Popup Entry Point
- *
- * Future responsibilities:
- *  - Render extension status (voice engine, AI service, browser runtime).
- *  - Provide mic toggle to start/stop voice capture from the popup.
- *  - Display last recognised command and AI response.
- *  - Allow user to configure settings (API key, voice speed, etc.).
- *  - Communicate with background service worker via chrome.runtime.sendMessage.
- */
+import { createSpeechRecognition, RecognitionState } from '../src/services/speechRecognition.js';
+import { parseCommand } from '../src/parser/commandParser.js';
 
-// No logic implemented yet — architecture placeholder.
+document.addEventListener('DOMContentLoaded', () => {
+  const btnStart = document.getElementById('btn-start');
+  const btnStop = document.getElementById('btn-stop');
+  const outputBox = document.getElementById('output-box');
+  const micStatusEl = document.getElementById('mic-status');
+
+  const sr = createSpeechRecognition({
+    onStateChange: (state) => {
+      micStatusEl.textContent = state;
+      
+      const isListening = [
+        RecognitionState.LISTENING,
+        RecognitionState.PROCESSING,
+        RecognitionState.SPEAKING
+      ].includes(state);
+
+      if (isListening) {
+        btnStart.disabled = true;
+        btnStop.disabled = false;
+      } else {
+        btnStart.disabled = false;
+        btnStop.disabled = true;
+      }
+    },
+    onResult: (text) => {
+      // Process speech with parser
+      const parsedObject = parseCommand(text);
+      
+      // Console out as required
+      console.log(parsedObject);
+      
+      // Update UI
+      outputBox.textContent = JSON.stringify(parsedObject, null, 2);
+    },
+    onError: (err) => {
+      console.error("Speech Recognition Error:", err);
+      outputBox.textContent = "Error: " + err;
+    }
+  });
+
+  btnStart.addEventListener('click', () => {
+    outputBox.textContent = "Listening...";
+    sr.start();
+  });
+
+  btnStop.addEventListener('click', () => {
+    sr.stop();
+    outputBox.textContent = "Stopped.";
+  });
+});

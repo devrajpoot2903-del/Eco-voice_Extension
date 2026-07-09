@@ -99,6 +99,26 @@ function detectPriority(text) {
  * async, so switching is a one-file change.
  */
 const INTENT_RULES = [
+  // ── PHASE 2 EXTENSION INTENTS ──
+  {
+    intent: 'SCROLL',
+    patterns: [
+      /^scroll\s+(up|down)$/i
+    ]
+  },
+  {
+    intent: 'CLICK',
+    patterns: [
+      /^click\s+(.+)$/i
+    ]
+  },
+  {
+    intent: 'OPEN',
+    patterns: [
+      /^open\s+(.+)$/i
+    ]
+  },
+
   // ── D1 UNDO ── must be FIRST to avoid collision with UNCOMPLETE_TASK
   {
     intent: 'UNDO',
@@ -637,6 +657,20 @@ export function parseCommand(rawText) {
 
   // Detect intent — first matching rule wins.
   const intent = detectIntent(text);
+
+  // ── Phase 2 Extension Intents ──────────────────────────────────────────────
+  if (intent === 'SCROLL') {
+    const match = text.match(/^scroll\s+(up|down)$/i);
+    return { intent: 'scroll', direction: match ? match[1].toLowerCase() : 'down' };
+  }
+  if (intent === 'CLICK') {
+    const match = text.match(/^click\s+(.+)$/i);
+    return { intent: 'click', target: match ? match[1].toLowerCase() : '' };
+  }
+  if (intent === 'OPEN') {
+    const match = text.match(/^open\s+(.+)$/i);
+    return { intent: 'open', target: match ? match[1].toLowerCase() : '' };
+  }
 
   // ── Simple intents: no payload extraction needed ───────────────────────────
   if (intent === 'UNDO') return { type: 'UNDO' };
