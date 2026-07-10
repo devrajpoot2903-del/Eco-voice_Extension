@@ -12,21 +12,26 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://www.apple.com/*"],
+      "matches": ["<all_urls>"],
       "js": ["content/navigationManager.js", "content/content.js"]
     }
   ],
   "permissions": [
     "storage",
-    "activeTab"
+    "activeTab",
+    "tabs"
   ],
   "web_accessible_resources": [
     {
       "resources": [
         "src/services/speechRecognition.js",
-        "src/parser/commandParser.js"
+        "src/parser/commandParser.js",
+        "content/actionEngine.js",
+        "content/elementFinder.js",
+        "content/domReader.js",
+        "content/contextMemory.js"
       ],
-      "matches": ["https://www.apple.com/*"]
+      "matches": ["<all_urls>"]
     }
   ]
 }

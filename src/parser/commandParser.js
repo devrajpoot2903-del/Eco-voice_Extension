@@ -99,12 +99,72 @@ function detectPriority(text) {
  * async, so switching is a one-file change.
  */
 const INTENT_RULES = [
+  // ── PHASE 5A: NAVIGATION ──
+  {
+    intent: 'NAVIGATE',
+    patterns: [
+      /^(?:go\s+back|navigate\s+back|back|previous\s+page)$/i,
+      /^(?:go\s+forward|navigate\s+forward|forward|next\s+page)$/i,
+      /^(?:reload|refresh|reload\s+page|refresh\s+page)$/i,
+      /^(?:go\s+home|home\s+page|go\s+to\s+home)$/i,
+      /^(?:open\s+(?:new\s+)?tab|new\s+tab)$/i,
+      /^(?:close\s+tab|close\s+this\s+tab)$/i,
+      /^(?:next\s+tab|switch\s+to\s+next\s+tab)$/i,
+      /^(?:previous\s+tab|prev\s+tab|switch\s+to\s+previous\s+tab)$/i,
+      /^(?:go\s+to\s+(?:url\s+)?|navigate\s+to\s+)https?:\/\/.+$/i,
+      /^(?:search\s+for|google\s+)(.+)$/i,
+    ]
+  },
+  // ── PHASE 5B: BROWSER CAPABILITIES ──
+  {
+    intent: 'DOUBLE_CLICK',
+    patterns: [ /^(?:double.?click|double.?tap)\s+(.+)$/i ]
+  },
+  {
+    intent: 'RIGHT_CLICK',
+    patterns: [ /^(?:right.?click|context\s+menu)(?:\s+on)?\s+(.+)$/i ]
+  },
+  {
+    intent: 'TYPE',
+    patterns: [
+      /^(?:type|write|enter|input)\s+(?:in(?:to)?\s+(?:.+?)\s+)?["']?(.+)["']?$/i,
+    ]
+  },
+  {
+    intent: 'ZOOM_IN',
+    patterns: [ /^zoom\s+in$/i, /^(?:make\s+(?:it\s+)?)?bigger$/i ]
+  },
+  {
+    intent: 'ZOOM_OUT',
+    patterns: [ /^zoom\s+out$/i, /^(?:make\s+(?:it\s+)?)?smaller$/i ]
+  },
+  {
+    intent: 'ZOOM_RESET',
+    patterns: [ /^(?:reset\s+zoom|zoom\s+reset|normal\s+zoom)$/i ]
+  },
+  {
+    intent: 'COPY',
+    patterns: [ /^copy(?:\s+that)?$/i, /^(?:copy\s+selection|copy\s+text)$/i ]
+  },
+  {
+    intent: 'PASTE',
+    patterns: [ /^paste(?:\s+that)?$/i, /^(?:paste\s+here|paste\s+it)$/i ]
+  },
+  {
+    intent: 'CUT',
+    patterns: [ /^cut(?:\s+that)?$/i, /^(?:cut\s+selection|cut\s+text)$/i ]
+  },
+  {
+    intent: 'REDO',
+    patterns: [ /^redo$/i, /^redo\s+(last|that|it)$/i ]
+  },
   // ── PHASE 2/3/4 EXTENSION INTENTS ──
   {
     intent: 'SCROLL',
     patterns: [
       /^(?:scroll|go)\s+(?:to\s+)?(up|down|bottom|top)$/i,
-      /^page\s+(up|down)$/i
+      /^page\s+(up|down)$/i,
+      /^scroll\s+(?:a\s+bit|slightly|a\s+little|more|a\s+lot|completely)$/i,
     ]
   },
   {
@@ -128,7 +188,7 @@ const INTENT_RULES = [
   {
     intent: 'READ',
     patterns: [
-      /^(?:read\s+page|extract\s+content|show\s+page\s+content|list\s+products)$/i
+      /^(?:read\s+page|extract\s+content|show\s+page\s+content|list\s+(?:products|buttons|links|inputs))$/i
     ]
   },
 
@@ -670,6 +730,53 @@ export function parseCommand(rawText) {
 
   // Detect intent — first matching rule wins.
   const intent = detectIntent(text);
+
+  // ── Phase 5A: Navigation ────────────────────────────────────────────────────
+  if (intent === 'NAVIGATE') {
+    if (/^(?:go\s+back|navigate\s+back|back|previous\s+page)$/i.test(text))
+      return { intent: 'navigate', action: 'back' };
+    if (/^(?:go\s+forward|navigate\s+forward|forward|next\s+page)$/i.test(text))
+      return { intent: 'navigate', action: 'forward' };
+    if (/^(?:reload|refresh|reload\s+page|refresh\s+page)$/i.test(text))
+      return { intent: 'navigate', action: 'reload' };
+    if (/^(?:go\s+home|home\s+page|go\s+to\s+home)$/i.test(text))
+      return { intent: 'navigate', action: 'home' };
+    if (/^(?:open\s+(?:new\s+)?tab|new\s+tab)$/i.test(text))
+      return { intent: 'tab', action: 'new' };
+    if (/^(?:close\s+tab|close\s+this\s+tab)$/i.test(text))
+      return { intent: 'tab', action: 'close' };
+    if (/^(?:next\s+tab|switch\s+to\s+next\s+tab)$/i.test(text))
+      return { intent: 'tab', action: 'next' };
+    if (/^(?:previous\s+tab|prev\s+tab|switch\s+to\s+previous\s+tab)$/i.test(text))
+      return { intent: 'tab', action: 'previous' };
+    const urlMatch = text.match(/(?:go\s+to\s+(?:url\s+)?|navigate\s+to\s+)(https?:\/\/.+)$/i);
+    if (urlMatch) return { intent: 'navigate', action: 'url', url: urlMatch[1].trim() };
+    const searchMatch = text.match(/^(?:search\s+for|google\s+)(.+)$/i);
+    if (searchMatch)
+      return { intent: 'navigate', action: 'url', url: `https://www.google.com/search?q=${encodeURIComponent(searchMatch[1])}` };
+    return { intent: 'navigate', action: 'back' };
+  }
+
+  // ── Phase 5B: Browser capabilities ─────────────────────────────────────────
+  if (intent === 'DOUBLE_CLICK') {
+    const m = text.match(/^(?:double.?click|double.?tap)\s+(.+)$/i);
+    return { intent: 'double-click', target: m ? m[1].toLowerCase() : '' };
+  }
+  if (intent === 'RIGHT_CLICK') {
+    const m = text.match(/^(?:right.?click|context\s+menu)(?:\s+on)?\s+(.+)$/i);
+    return { intent: 'right-click', target: m ? m[1].toLowerCase() : '' };
+  }
+  if (intent === 'TYPE') {
+    const m = text.match(/^(?:type|write|enter|input)\s+(?:in(?:to)?\s+(.+?)\s+)?["']?(.+)["']?$/i);
+    return { intent: 'type', target: m && m[1] ? m[1] : null, value: m ? (m[2] || m[1] || '') : text };
+  }
+  if (intent === 'ZOOM_IN')    return { intent: 'zoom-in' };
+  if (intent === 'ZOOM_OUT')   return { intent: 'zoom-out' };
+  if (intent === 'ZOOM_RESET') return { intent: 'zoom-reset' };
+  if (intent === 'COPY')  return { intent: 'copy' };
+  if (intent === 'PASTE') return { intent: 'paste' };
+  if (intent === 'CUT')   return { intent: 'cut' };
+  if (intent === 'REDO')  return { intent: 'redo' };
 
   // ── Phase 2/3/4 Extension Intents ──────────────────────────────────────────────
   if (intent === 'SCROLL') {

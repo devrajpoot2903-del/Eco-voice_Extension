@@ -1,110 +1,165 @@
 /**
  * content.js — EcoVoice Extension Content Script
  *
- * Phase 4–6: Full HUD, Dispatcher, Runtime (Speech + Parser via dynamic import),
- * session persistence, and Navigation Manager integration.
+ * Phase 4–5: HUD, Dispatcher → ActionEngine, DOM Runtime,
+ * session persistence, Navigation Manager integration,
+ * follow-up context memory, Phase 5A–5E features.
  */
 
 console.log('[EcoVoice] content.js loaded');
 
+// ─── Module references (populated by initRuntime) ────────────────────────────
+let _ActionEngine   = null;
+let _DOMReader      = null;
+let _resolveFollowUp = null;
+let _updateContext   = null;
+let _parseCommand    = null;
+
+// ─── HUD helpers (defined before injectHUD so logAction can use them) ─────────
+
+function updateHUDStatus(s) {
+  const el = document.getElementById('ev-status');
+  if (el) el.textContent = s;
+}
+function updateHUDCommand(t) {
+  const el = document.getElementById('ev-command');
+  if (el) el.textContent = t || '-';
+}
+function updateHUDJson(obj) {
+  const el = document.getElementById('ev-json');
+  if (el) el.textContent = JSON.stringify(obj, null, 2);
+}
+function updateHUDResult(r) {
+  const el = document.getElementById('ev-result');
+  if (el) el.textContent = r || '-';
+}
+
 // ─── Dispatcher ───────────────────────────────────────────────────────────────
 
-function logAction(command, handlerName, matchText, resultText) {
-  updateHUDResult(resultText);
-  console.log(
-    `[EcoVoice] Command: ${JSON.stringify(command)}\n` +
-    `  Handler: ${handlerName}\n` +
-    `  Match: ${matchText || 'none'}\n` +
-    `  Result: ${resultText}`
-  );
-}
-
-function findVisibleElementByText(text) {
-  if (!text) return null;
-  const lower = text.toLowerCase();
-  const candidates = Array.from(
-    document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"], [tabindex]')
-  );
-  for (const el of candidates) {
-    const r = el.getBoundingClientRect();
-    const visible =
-      r.width > 0 && r.height > 0 &&
-      r.top >= 0 && r.left >= 0 &&
-      r.bottom <= (window.innerHeight || document.documentElement.clientHeight) &&
-      r.right  <= (window.innerWidth  || document.documentElement.clientWidth);
-    if (visible) {
-      const label = (
-        el.textContent || el.innerText ||
-        el.getAttribute('aria-label') || el.getAttribute('title') || ''
-      ).toLowerCase();
-      if (label.includes(lower)) return el;
-    }
-  }
-  return null;
-}
-
-function handleScroll(command) {
-  const dir = command.direction;
-  if      (dir === 'down')   window.scrollBy({ top:  500, behavior: 'smooth' });
-  else if (dir === 'up')     window.scrollBy({ top: -500, behavior: 'smooth' });
-  else if (dir === 'bottom') window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-  else if (dir === 'top')    window.scrollTo({ top: 0, behavior: 'smooth' });
-  logAction(command, 'handleScroll()', null, 'Scrolled: ' + dir);
-}
-
-function handleClick(command) {
-  const el = findVisibleElementByText(command.target);
-  if (el) { el.click(); logAction(command, 'handleClick()', `<${el.tagName.toLowerCase()}>`, 'Clicked'); }
-  else     logAction(command, 'handleClick()', null, 'No matching element');
-}
-
-function handleHover(command) {
-  const el = findVisibleElementByText(command.target);
-  if (el) {
-    el.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, cancelable: true, view: window }));
-    el.dispatchEvent(new MouseEvent('mouseover',  { bubbles: true, cancelable: true, view: window }));
-    logAction(command, 'handleHover()', `<${el.tagName.toLowerCase()}>`, 'Hovered');
-  } else {
-    logAction(command, 'handleHover()', null, 'No matching element');
-  }
-}
-
-function handleOpen(command) {
-  const el = findVisibleElementByText(command.target);
-  if (el) { el.click(); logAction(command, 'handleOpen()', `<${el.tagName.toLowerCase()}>`, 'Opened'); }
-  else     logAction(command, 'handleOpen()', null, 'No matching element');
-}
-
 function dispatchAction(command) {
-  switch (command.intent) {
-    case 'scroll': handleScroll(command); break;
-    case 'click':  handleClick(command);  break;
-    case 'hover':  handleHover(command);  break;
-    case 'open':   handleOpen(command);   break;
-    case 'read':   logAction(command, 'handleRead()', null, 'Read (placeholder)'); break;
-    default:       console.log('[EcoVoice] No handler for intent:', command.intent);
+  if (!_ActionEngine) {
+    console.warn('[EcoVoice] ActionEngine not ready');
+    return;
   }
+
+  let result = '';
+
+  switch (command.intent) {
+    // Scroll
+    case 'scroll':
+      result = _ActionEngine.scroll(command.direction, command.amount);
+      break;
+
+    // Clicks
+    case 'click':
+      result = _ActionEngine.click(command.target);
+      break;
+    case 'double-click':
+    case 'double_click':
+      result = _ActionEngine.doubleClick(command.target);
+      break;
+    case 'right-click':
+    case 'right_click':
+      result = _ActionEngine.rightClick(command.target);
+      break;
+
+    // Hover / Focus
+    case 'hover':
+      result = _ActionEngine.hover(command.target);
+      break;
+    case 'focus':
+      result = _ActionEngine.focus(command.target);
+      break;
+
+    // Open acts like click
+    case 'open':
+      result = _ActionEngine.click(command.target);
+      break;
+
+    // Input / Select / Submit
+    case 'type':
+    case 'input':
+      result = _ActionEngine.input(command.target, command.value || '');
+      break;
+    case 'select':
+      result = _ActionEngine.select(command.target, command.option || '');
+      break;
+    case 'submit':
+      result = _ActionEngine.submit(command.target);
+      break;
+
+    // Clipboard
+    case 'copy':  result = _ActionEngine.copy();  break;
+    case 'paste': result = _ActionEngine.paste(); break;
+    case 'cut':   result = _ActionEngine.cut();   break;
+
+    // Undo/Redo
+    case 'undo': result = _ActionEngine.undo(); break;
+    case 'redo': result = _ActionEngine.redo(); break;
+
+    // Zoom
+    case 'zoom-in':  case 'zoom_in':    result = _ActionEngine.zoom('in');    break;
+    case 'zoom-out': case 'zoom_out':   result = _ActionEngine.zoom('out');   break;
+    case 'zoom-reset':case 'zoom_reset':result = _ActionEngine.zoom('reset'); break;
+
+    // Navigation
+    case 'navigate':
+      result = _ActionEngine.navigate(command.action, command.url);
+      break;
+
+    // Tab
+    case 'tab':
+      result = _ActionEngine.tab(command.action);
+      break;
+
+    // Drag
+    case 'drag':
+      result = _ActionEngine.drag(command.from, command.to);
+      break;
+
+    // DOM read
+    case 'read':
+      if (_DOMReader) {
+        const snap = _DOMReader.snapshot();
+        console.log('[EcoVoice] Page snapshot:', snap);
+        result = `Page: "${snap.title}" — ${snap.buttons.length} buttons, ${snap.links.length} links`;
+      }
+      break;
+
+    // Stop is a no-op here (handled by speech engine)
+    case 'stop':
+      result = 'Stopped';
+      break;
+
+    default:
+      console.log('[EcoVoice] No handler for intent:', command.intent);
+      result = 'Unknown command';
+  }
+
+  if (_updateContext) _updateContext(command);
+  updateHUDResult(result || 'Done');
+  console.log(`[EcoVoice] Dispatched: ${command.intent} → ${result}`);
 }
 
 // ─── HUD ─────────────────────────────────────────────────────────────────────
 
-let _hudEl = null;
+let _hudEl      = null;
 let _hudContent = null;
 let _isDragging = false;
 let _curX, _curY, _initX, _initY;
 let _xOff = 0, _yOff = 0;
 
 function injectHUD() {
-  if (document.getElementById('ecovoice-hud')) return; // prevent duplicate
+  if (document.getElementById('ecovoice-hud')) return;
 
   _hudEl = document.createElement('div');
   _hudEl.id = 'ecovoice-hud';
   _hudEl.style.cssText = `
     position:fixed; top:20px; right:20px; width:320px; z-index:2147483647;
-    background:rgba(17,24,39,0.92); backdrop-filter:blur(14px);
+    background:rgba(17,24,39,0.93); backdrop-filter:blur(14px);
     -webkit-backdrop-filter:blur(14px);
     border:1px solid rgba(255,255,255,0.12); border-radius:14px;
-    box-shadow:0 10px 30px rgba(0,0,0,0.4); color:#f3f4f6;
+    box-shadow:0 10px 30px rgba(0,0,0,0.45); color:#f3f4f6;
     font-family:system-ui,-apple-system,sans-serif; font-size:13px;
     display:flex; flex-direction:column; overflow:hidden;
   `;
@@ -119,8 +174,8 @@ function injectHUD() {
   header.innerHTML = `
     <span style="font-weight:600;font-size:14px;">🎙 EcoVoice V1</span>
     <div style="display:flex;gap:8px;">
-      <button id="ev-collapse" style="background:none;border:none;color:#9ca3af;cursor:pointer;font-size:16px;">_</button>
-      <button id="ev-hide"     style="background:none;border:none;color:#9ca3af;cursor:pointer;font-size:16px;">×</button>
+      <button id="ev-collapse" style="background:none;border:none;color:#9ca3af;cursor:pointer;font-size:16px;" title="Collapse">_</button>
+      <button id="ev-hide"     style="background:none;border:none;color:#9ca3af;cursor:pointer;font-size:16px;" title="Hide">×</button>
     </div>
   `;
 
@@ -179,7 +234,7 @@ function injectHUD() {
     _initX = _curX; _initY = _curY;
   });
 
-  // Restore saved position
+  // Restore position
   const sx = sessionStorage.getItem('ev-hud-x');
   const sy = sessionStorage.getItem('ev-hud-y');
   if (sx && sy) {
@@ -191,7 +246,7 @@ function injectHUD() {
     sessionStorage.setItem('ev-hud-y', _yOff);
   });
 
-  // Buttons
+  // Collapse / hide
   document.getElementById('ev-collapse').addEventListener('click', () => {
     _hudContent.style.display = _hudContent.style.display === 'none' ? 'flex' : 'none';
   });
@@ -205,54 +260,50 @@ function injectHUD() {
   });
 }
 
-// Expose so navigationManager can call them after SPA transition
+// Expose for navigationManager
 window.ecoVoiceInjectHUD = injectHUD;
 
-function updateHUDStatus(s) {
-  const el = document.getElementById('ev-status');
-  if (el) el.textContent = s;
-}
-function updateHUDCommand(t) {
-  const el = document.getElementById('ev-command');
-  if (el) el.textContent = t || '-';
-}
-function updateHUDJson(obj) {
-  const el = document.getElementById('ev-json');
-  if (el) el.textContent = JSON.stringify(obj, null, 2);
-}
-function updateHUDResult(r) {
-  const el = document.getElementById('ev-result');
-  if (el) el.textContent = r || '-';
-}
-
-// ─── Runtime (Speech + Parser via dynamic import) ─────────────────────────────
+// ─── Runtime (dynamic imports) ────────────────────────────────────────────────
 
 window.ecoVoiceSR = null;
 
 async function initRuntime() {
-  // If already running, just ensure it's listening
   if (window.ecoVoiceSR) {
     if (window.ecoVoiceSR.supported) window.ecoVoiceSR.start();
     return;
   }
 
   try {
-    const srUrl = chrome.runtime.getURL('src/services/speechRecognition.js');
-    const cpUrl = chrome.runtime.getURL('src/parser/commandParser.js');
+    const base = chrome.runtime.getURL('');
 
-    const [srMod, cpMod] = await Promise.all([import(srUrl), import(cpUrl)]);
-    const { createSpeechRecognition } = srMod;
-    const { parseCommand } = cpMod;
+    const [srMod, cpMod, aeMod, drMod, cmMod] = await Promise.all([
+      import(chrome.runtime.getURL('src/services/speechRecognition.js')),
+      import(chrome.runtime.getURL('src/parser/commandParser.js')),
+      import(chrome.runtime.getURL('content/actionEngine.js')),
+      import(chrome.runtime.getURL('content/domReader.js')),
+      import(chrome.runtime.getURL('content/contextMemory.js')),
+    ]);
 
-    window.ecoVoiceSR = createSpeechRecognition({
-      onStateChange: (state) => updateHUDStatus(state),
+    _parseCommand     = cpMod.parseCommand;
+    _ActionEngine     = aeMod.ActionEngine;
+    _DOMReader        = drMod.DOMReader;
+    _resolveFollowUp  = cmMod.resolveFollowUp;
+    _updateContext    = cmMod.updateContext;
+
+    window.ecoVoiceSR = srMod.createSpeechRecognition({
+      onStateChange: (s) => updateHUDStatus(s),
       onResult: (text) => {
         updateHUDCommand(text);
-        updateHUDResult('Executing...');
-        const parsed = parseCommand(text);
+        updateHUDResult('Processing...');
+
+        // Try follow-up resolution first
+        let parsed = _resolveFollowUp ? _resolveFollowUp(text) : null;
+        if (!parsed) parsed = _parseCommand(text);
+
         updateHUDJson(parsed);
         dispatchAction(parsed);
-        // Continuous: restart after each command
+
+        // Continuous listening
         setTimeout(() => {
           if (window.ecoVoiceSR) window.ecoVoiceSR.startAfterDelay(100);
         }, 50);
@@ -260,18 +311,17 @@ async function initRuntime() {
       onError: (err) => {
         console.error('[EcoVoice] Speech error:', err);
         updateHUDResult('Error: ' + err);
-      }
+      },
     });
 
     window.ecoVoiceSR.start();
     updateHUDStatus('Listening');
   } catch (err) {
-    console.error('[EcoVoice] Failed to init runtime:', err);
+    console.error('[EcoVoice] Runtime init failed:', err);
     updateHUDResult('Init error: ' + err.message);
   }
 }
 
-// Expose so navigationManager can call it
 window.ecoVoiceInitRuntime = initRuntime;
 
 // ─── Navigation Manager integration ──────────────────────────────────────────
@@ -285,7 +335,7 @@ window.addEventListener('ecovoice:navigation', () => {
   initRuntime();
 });
 
-// ─── Auto-recover on hard page refresh ────────────────────────────────────────
+// ─── Auto-recover on page load ────────────────────────────────────────────────
 
 if (sessionStorage.getItem('ecovoice_active') === 'true') {
   console.log('[EcoVoice] Auto-recovering session...');
@@ -293,7 +343,7 @@ if (sessionStorage.getItem('ecovoice_active') === 'true') {
   initRuntime();
 }
 
-// ─── Message listener (from popup launcher) ──────────────────────────────────
+// ─── Message listener ─────────────────────────────────────────────────────────
 
 if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
   chrome.runtime.onMessage.addListener((message) => {
