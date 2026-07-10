@@ -99,23 +99,36 @@ function detectPriority(text) {
  * async, so switching is a one-file change.
  */
 const INTENT_RULES = [
-  // ── PHASE 2 EXTENSION INTENTS ──
+  // ── PHASE 2/3/4 EXTENSION INTENTS ──
   {
     intent: 'SCROLL',
     patterns: [
-      /^scroll\s+(up|down)$/i
+      /^(?:scroll|go)\s+(?:to\s+)?(up|down|bottom|top)$/i,
+      /^page\s+(up|down)$/i
     ]
   },
   {
     intent: 'CLICK',
     patterns: [
-      /^click\s+(.+)$/i
+      /^(?:click|tap|select)(?:\s+button)?\s+(.+)$/i
+    ]
+  },
+  {
+    intent: 'HOVER',
+    patterns: [
+      /^(?:hover|focus)(?:\s+over)?\s+(.+)$/i
     ]
   },
   {
     intent: 'OPEN',
     patterns: [
       /^open\s+(.+)$/i
+    ]
+  },
+  {
+    intent: 'READ',
+    patterns: [
+      /^(?:read\s+page|extract\s+content|show\s+page\s+content|list\s+products)$/i
     ]
   },
 
@@ -658,18 +671,25 @@ export function parseCommand(rawText) {
   // Detect intent — first matching rule wins.
   const intent = detectIntent(text);
 
-  // ── Phase 2 Extension Intents ──────────────────────────────────────────────
+  // ── Phase 2/3/4 Extension Intents ──────────────────────────────────────────────
   if (intent === 'SCROLL') {
-    const match = text.match(/^scroll\s+(up|down)$/i);
+    const match = text.match(/(up|down|bottom|top)/i);
     return { intent: 'scroll', direction: match ? match[1].toLowerCase() : 'down' };
   }
   if (intent === 'CLICK') {
-    const match = text.match(/^click\s+(.+)$/i);
+    const match = text.match(/^(?:click|tap|select)(?:\s+button)?\s+(.+)$/i);
     return { intent: 'click', target: match ? match[1].toLowerCase() : '' };
+  }
+  if (intent === 'HOVER') {
+    const match = text.match(/^(?:hover|focus)(?:\s+over)?\s+(.+)$/i);
+    return { intent: 'hover', target: match ? match[1].toLowerCase() : '' };
   }
   if (intent === 'OPEN') {
     const match = text.match(/^open\s+(.+)$/i);
     return { intent: 'open', target: match ? match[1].toLowerCase() : '' };
+  }
+  if (intent === 'READ') {
+    return { intent: 'read' };
   }
 
   // ── Simple intents: no payload extraction needed ───────────────────────────

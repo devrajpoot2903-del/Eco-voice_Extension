@@ -13,11 +13,20 @@
   "content_scripts": [
     {
       "matches": ["https://www.apple.com/*"],
-      "js": ["content/content.js"]
+      "js": ["content/navigationManager.js", "content/content.js"]
     }
   ],
   "permissions": [
     "storage",
     "activeTab"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/services/speechRecognition.js",
+        "src/parser/commandParser.js"
+      ],
+      "matches": ["https://www.apple.com/*"]
+    }
   ]
 }
