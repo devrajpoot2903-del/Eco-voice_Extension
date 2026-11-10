@@ -107,10 +107,17 @@ export function createSpeechRecognition({ onStateChange, onResult, onError }) {
       return;
     }
 
-    // PROCESSING / SPEAKING: do NOT restart — App will call startAfterDelay().
+    // PROCESSING: onend fired because we called _hardStop() after a result.
+    // A restart timer is already scheduled by the app (startAfterDelay).
+    // Do NOT transition to IDLE here — that would cause startAfterDelay to bail.
+    if (state === RecognitionState.PROCESSING) {
+      return;
+    }
+
+    // SPEAKING: do NOT restart — TTS is active, App will call startAfterDelay().
     // IDLE / ERROR: closed intentionally, stay stopped.
     if (state !== RecognitionState.ERROR && state !== RecognitionState.IDLE &&
-        state !== RecognitionState.PROCESSING && state !== RecognitionState.SPEAKING) {
+        state !== RecognitionState.SPEAKING) {
       transition(RecognitionState.IDLE);
     }
   };
@@ -164,13 +171,17 @@ export function createSpeechRecognition({ onStateChange, onResult, onError }) {
       _safeStart();
     },
 
-    /** Hard-stop everything. Cancels any pending restart timer. */
+    /** Hard-stop everything. Cancels any pending restart timer. Forces IDLE even from PROCESSING. */
     stop() {
       _clearRestartTimer();
-      if (state === RecognitionState.IDLE || state === RecognitionState.ERROR) {
-        console.debug('[EcoVoice SR] stop() ignored — state:', state);
+      if (state === RecognitionState.IDLE) {
+        console.debug('[EcoVoice SR] stop() — already IDLE');
         return;
       }
+      // Bug Fix 2: Explicitly force IDLE regardless of current state (including PROCESSING).
+      // Without this, calling stop() while in PROCESSING leaves the state stuck,
+      // and subsequent start() calls are silently ignored.
+      console.debug('[EcoVoice SR] stop() — forcing IDLE from state:', state);
       transition(RecognitionState.IDLE);
       _hardStop();
     },
@@ -188,23 +199,35 @@ export function createSpeechRecognition({ onStateChange, onResult, onError }) {
     },
 
     /**
-     * Called by App after TTS ends.
+     * Called by App after TTS ends or after command processing finishes.
      * Waits `delayMs` (default 750ms) then restarts the mic.
-     * Only restarts if the user has not manually stopped (IDLE/ERROR).
+     * Only restarts if the user has not manually stopped (IDLE/ERROR)
+     * and TTS is not currently active (unless afterSpeech is true).
      *
      * @param {number} delayMs
+     * @param {object} [opts]
+     * @param {boolean} [opts.afterSpeech]
      */
-    startAfterDelay(delayMs = 750) {
+    startAfterDelay(delayMs = 750, opts = {}) {
+      if (opts?.afterSpeech !== true && state === RecognitionState.SPEAKING) {
+        console.debug('[EcoVoice SR] deferred restart skipped — TTS still speaking');
+        return;
+      }
       _clearRestartTimer();
       console.debug(`[EcoVoice SR] startAfterDelay(${delayMs}ms)`);
       _restartTimer = setTimeout(() => {
         _restartTimer = null;
-        if (state === RecognitionState.IDLE || state === RecognitionState.ERROR) {
-          // User manually stopped — don't auto-restart.
-          console.debug('[EcoVoice SR] deferred restart skipped — user stopped');
+        if (opts?.afterSpeech !== true && state === RecognitionState.SPEAKING) {
+          console.debug('[EcoVoice SR] deferred restart skipped — TTS still speaking');
           return;
         }
-        console.debug('[EcoVoice SR] restarting mic after TTS + delay');
+        // Only skip restart if the user explicitly stopped (IDLE) or a fatal error occurred.
+        // PROCESSING means a result was handled and we should restart; allow it.
+        if (state === RecognitionState.IDLE || state === RecognitionState.ERROR) {
+          console.debug('[EcoVoice SR] deferred restart skipped — user stopped or error');
+          return;
+        }
+        console.debug('[EcoVoice SR] restarting mic (state was:', state, ')');
         transition(RecognitionState.LISTENING);
         _safeStart();
       }, delayMs);

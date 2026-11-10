@@ -12,8 +12,13 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["content/navigationManager.js", "content/content.js"]
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content/navigationManager.js",
+        "content/content.js"
+      ]
     }
   ],
   "permissions": [
@@ -25,13 +30,17 @@
     {
       "resources": [
         "src/services/speechRecognition.js",
+        "src/services/ttsService.js",
         "src/parser/commandParser.js",
         "content/actionEngine.js",
         "content/elementFinder.js",
         "content/domReader.js",
-        "content/contextMemory.js"
+        "content/contextMemory.js",
+        "rules.json"
       ],
-      "matches": ["<all_urls>"]
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ]
 }

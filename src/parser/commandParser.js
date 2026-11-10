@@ -22,7 +22,13 @@
  *   UNCOMPLETE_TASK — user wants to revert a task to pending
  *   DELETE_TASK     — user wants to remove a task
  *   CREATE_TASK     — user wants to add a task
+ *   CLARIFY         — user request is ambiguous, needs options/decision
  *   UNKNOWN         — no intent matched
+ *
+ * LLM SYSTEM PROMPT / SCHEMA INSTRUCTIONS:
+ * If the user's request is ambiguous, generic, or requires decision-making based on 
+ * options not fully specified (e.g., "give me the best phone"), DO NOT guess the target.
+ * Instead, return {"intent": "CLARIFY", "message": "<your specific follow-up question>"}.
  *
  * Return shapes:
  *   { type: 'SET_PRIORITY',    query: string, priority: 'high'|'normal' }
@@ -32,6 +38,7 @@
  *   { type: 'UNCOMPLETE_TASK', query: string }
  *   { type: 'DELETE_TASK',     query: string }
  *   { type: 'CREATE_TASK',     task: string, priority: 'high'|'normal' }
+ *   { type: 'CLARIFY',         message: string }
  *   { type: 'UNKNOWN' }
  */
 
@@ -61,7 +68,20 @@ function normalise(text) {
     .replace(/\bwanna\b/g, 'want to')
     .replace(/\bgotta\b/g, 'got to')
     .replace(/\s+/g, ' ')
-    .replace(/[.!?]+$/, '');
+    .replace(/[.!?]+$/, '')
+    // ── Homophone / Speech-API normalisation ────────────────────────────────
+    // Web Speech API commonly transcribes UI keywords as homophones.
+    // Apply word-boundary replacements so surrounding words are unaffected.
+    // e.g. "click by" → "click buy", "tap cell" → "tap sell"
+    .replace(/\bby\b/g, 'buy')           // "by" → "buy"
+    .replace(/\bbye\b/g, 'buy')          // "bye" → "buy"
+    .replace(/\bcell\b/g, 'sell')        // "cell" → "sell" (e-commerce contexts)
+    .replace(/\bto\b(?=\s+cart)/g, '2')  // "to cart" stays; bare "to" below handled contextually
+    .replace(/\bfor free\b/g, 'free')    // "for free" → "free" (button label cleanup)
+    .replace(/\badd two cart\b/g, 'add to cart')
+    .replace(/\badd too cart\b/g, 'add to cart')
+    .replace(/\bchecked out\b/g, 'checkout')
+    .replace(/\bcheck out\b/g, 'checkout');
 }
 
 // ---------------------------------------------------------------------------
@@ -117,6 +137,13 @@ const INTENT_RULES = [
   },
   // ── PHASE 5B: BROWSER CAPABILITIES ──
   {
+    intent: 'CLARIFY',
+    patterns: [
+      /^(?:what is|give me|show me)\s+(?:the\s+)?(?:best\s+)?(.+)$/i,
+      /^(?:give me\s+options|i don't know|what should i choose|help me choose)$/i
+    ]
+  },
+  {
     intent: 'DOUBLE_CLICK',
     patterns: [ /^(?:double.?click|double.?tap)\s+(.+)$/i ]
   },
@@ -158,13 +185,40 @@ const INTENT_RULES = [
     intent: 'REDO',
     patterns: [ /^redo$/i, /^redo\s+(last|that|it)$/i ]
   },
+  // ── PHASE 5B EXTENDED + PHASE 6 ──
+  {
+    intent: 'KEYBOARD',
+    patterns: [
+      /^(?:press|hit|type key)\s+(enter|escape|esc|tab|space|backspace|delete|arrow\s*up|arrow\s*down|arrow\s*left|arrow\s*right)$/i,
+    ]
+  },
+  {
+    intent: 'SELECT_ALL',
+    patterns: [
+      /^(?:select\s+all|ctrl\s*\+?\s*a|highlight\s+all)$/i,
+    ]
+  },
+  {
+    intent: 'SCROLL_INTO_VIEW',
+    patterns: [
+      /^(?:scroll\s+to|bring\s+into\s+view|show|find\s+and\s+show)\s+(.+)$/i,
+    ]
+  },
+  {
+    intent: 'WINDOW_FOCUS',
+    patterns: [
+      /^(?:focus\s+window|focus\s+tab|activate\s+window)$/i,
+    ]
+  },
   // ── PHASE 2/3/4 EXTENSION INTENTS ──
   {
     intent: 'SCROLL',
     patterns: [
-      /^(?:scroll|go)\s+(?:to\s+)?(up|down|bottom|top)$/i,
-      /^page\s+(up|down)$/i,
-      /^scroll\s+(?:a\s+bit|slightly|a\s+little|more|a\s+lot|completely)$/i,
+      /^(?:scroll|move|slide|go|travel)\s+(?:to\s+)?(up|down|bottom|top|left|right)$/i,
+      /^page\s+(up|down|left|right)$/i,
+      /^scroll\s+(?:a\s+bit|slightly|a\s+little|more|a\s+lot|completely|far|page)$/i,
+      /^(?:move|slide|go)\s+(?:up|down|left|right)$/i,
+      /^(?:scroll|go)\s+to\s+(?:the\s+)?(?:top|bottom|beginning|end|start|finish)$/i,
     ]
   },
   {
@@ -778,10 +832,38 @@ export function parseCommand(rawText) {
   if (intent === 'CUT')   return { intent: 'cut' };
   if (intent === 'REDO')  return { intent: 'redo' };
 
+  if (intent === 'KEYBOARD') {
+    const m = text.match(/^(?:press|hit|type key)\s+(.+)$/i);
+    const key = m ? m[1].toLowerCase().replace(/\s+/g, '') : '';
+    const keyMap = { esc: 'escape', arrowup: 'arrowup', arrowdown: 'arrowdown', arrowleft: 'arrowleft', arrowright: 'arrowright' };
+    return { intent: 'keyboard', key: keyMap[key] || key };
+  }
+  if (intent === 'SELECT_ALL') return { intent: 'select-all' };
+  if (intent === 'SCROLL_INTO_VIEW') {
+    const m = text.match(/^(?:scroll\s+to|bring\s+into\s+view|show|find\s+and\s+show)\s+(.+)$/i);
+    return { intent: 'scroll-into-view', target: m ? m[1].toLowerCase() : '' };
+  }
+  if (intent === 'WINDOW_FOCUS') return { intent: 'window-focus' };
+
   // ── Phase 2/3/4 Extension Intents ──────────────────────────────────────────────
   if (intent === 'SCROLL') {
-    const match = text.match(/(up|down|bottom|top)/i);
-    return { intent: 'scroll', direction: match ? match[1].toLowerCase() : 'down' };
+    // Direction synonyms
+    const raw = text.replace(/^(?:scroll|move|slide|go|travel)\s+(?:to\s+)?/i, '').trim();
+    const dirMap = {
+      up: 'up', upward: 'up', upwards: 'up',
+      down: 'down', downward: 'down', downwards: 'down',
+      left: 'left', leftward: 'left',
+      right: 'right', rightward: 'right',
+      top: 'top', beginning: 'top', start: 'top', head: 'top',
+      bottom: 'bottom', end: 'bottom', last: 'bottom', finish: 'bottom',
+      'page-up': 'page-up', 'page-down': 'page-down',
+      'page-left': 'page-left', 'page-right': 'page-right',
+    };
+    // page up/down
+    const pageM = text.match(/^page\s+(up|down|left|right)$/i);
+    if (pageM) return { intent: 'scroll', direction: `page-${pageM[1].toLowerCase()}` };
+    const dir = dirMap[raw] || (text.match(/(up|down|left|right|bottom|top)/i) || [])[1]?.toLowerCase() || 'down';
+    return { intent: 'scroll', direction: dir };
   }
   if (intent === 'CLICK') {
     const match = text.match(/^(?:click|tap|select)(?:\s+button)?\s+(.+)$/i);
@@ -797,6 +879,11 @@ export function parseCommand(rawText) {
   }
   if (intent === 'READ') {
     return { intent: 'read' };
+  }
+  
+  if (intent === 'CLARIFY') {
+    // Phase 6: Smart Follow-ups
+    return { intent: 'CLARIFY', message: "I'm not sure which one you mean. Could you please specify?" };
   }
 
   // ── Simple intents: no payload extraction needed ───────────────────────────

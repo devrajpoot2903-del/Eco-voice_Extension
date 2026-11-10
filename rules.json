@@ -1,0 +1,36 @@
+{
+  "version": "1.0",
+  "global_rules": {
+    "restricted_keywords": [
+      "pay",
+      "checkout",
+      "delete",
+      "buy now",
+      "buy",
+      "add to bag",
+      "add to cart",
+      "remove",
+      "confirm order",
+      "place order",
+      "submit payment"
+    ],
+    "action_on_match": "REQUIRE_VOICE_CONFIRMATION"
+  },
+  "domain_rules": {
+    "apple.com": {
+      "restricted_urls": [
+        "*/shop/checkout*",
+        "*/bag*",
+        "*/shop/buy*",
+        "*/shop/product/buy*"
+      ],
+      "restricted_elements": [
+        "#add-to-cart",
+        "[data-action='add-to-cart']",
+        ".rs-add-to-cart",
+        "#checkout-button"
+      ],
+      "action_on_match": "BLOCK"
+    }
+  }
+}
