@@ -61,12 +61,12 @@ function resolveDirection(text) {
 function resolveAmount(text) {
   const t = text.toLowerCase().trim();
   for (const [phrase, amt] of Object.entries(SCROLL_AMOUNTS)) {
-    if (t === phrase || t.startsWith(phrase)) {
+    if (t === phrase || t === `scroll ${phrase}` || t === `${phrase} more`) {
       return amt === -1 ? window.innerHeight * 0.9 : amt;
     }
   }
-  // "scroll X pixels" / "X pixels"
-  const m = t.match(/(\d+)\s*(?:px|pixels?)?/);
+  // Pure numeric scroll: "scroll X", "scroll X px", "scroll X pixels", "X px", "X pixels", or standalone number "X"
+  const m = t.match(/^(?:scroll\s+)?(\d+)(?:\s*(?:px|pixels?))?$/);
   if (m) return parseInt(m[1], 10);
   return null;
 }
@@ -76,6 +76,11 @@ function resolveAmount(text) {
 export function resolveFollowUp(rawText) {
   const t = rawText.toLowerCase().trim();
   const last = lastCmd();
+
+  // Explicit non-scroll action commands must NEVER be intercepted as scroll follow-ups
+  if (/^(?:click|tap|select|press|choose|open|hover|focus|type|write|input)\b/i.test(t)) {
+    return null;
+  }
 
   // ── Stop any continuous action ─────────────────────────────────────────────
   if (STOP_WORDS.test(t)) {
@@ -107,7 +112,7 @@ export function resolveFollowUp(rawText) {
     if (/^faster$/.test(t))  return { intent: 'scroll', direction: dir, amount: Math.min((last.amount || 500) * 1.8, 2000) };
     if (/^slower$/.test(t))  return { intent: 'scroll', direction: dir, amount: Math.max((last.amount || 500) * 0.4, 80) };
 
-    // Amount-only phrase  e.g. "a little", "a lot"
+    // Amount-only phrase e.g. "a little", "a lot", "scroll 300"
     const amt = resolveAmount(t);
     if (amt !== null) return { intent: 'scroll', direction: dir, amount: amt };
 
@@ -116,7 +121,7 @@ export function resolveFollowUp(rawText) {
     if (newDir) return { intent: 'scroll', direction: newDir, amount: last.amount || 500 };
 
     // "scroll a little more to the right"
-    const complexMatch = t.match(/(?:scroll\s+)?(.+?)\s+(?:more\s+)?(?:to\s+the\s+)?(.+)/);
+    const complexMatch = t.match(/^(?:scroll\s+)?(.+?)\s+(?:more\s+)?(?:to\s+the\s+)?(.+)$/);
     if (complexMatch) {
       const modAmt = resolveAmount(complexMatch[1]);
       const modDir = resolveDirection(complexMatch[2]);
@@ -173,15 +178,19 @@ export function resolveFollowUp(rawText) {
   }
 
   // ── Combined direction + intensity e.g. "a little down", "way down" ───────
-  const dirMatch  = [...Object.keys(DIR_SYNONYMS)].find((d) => new RegExp(`\\b${d}\\b`, 'i').test(t));
-  const amtFromT  = resolveAmount(t);
-  if (dirMatch) {
-    return { intent: 'scroll', direction: dirMatch, amount: amtFromT || 500 };
+  const pureDirMatch = t.match(/^(?:scroll\s+)?(?:(?:a\s+little|a\s+bit|slightly|a\s+lot|way|far)\s+)?(up|down|left|right|top|bottom)(?:\s+(?:more|again))?$/i);
+  if (pureDirMatch) {
+    const dir = pureDirMatch[1].toLowerCase();
+    const amt = resolveAmount(t) || 500;
+    return { intent: 'scroll', direction: dir, amount: amt };
   }
 
   // ── Intensity-only if last was scroll ─────────────────────────────────────
-  if (last && last.intent === 'scroll' && amtFromT !== null) {
-    return { intent: 'scroll', direction: last.direction || 'down', amount: amtFromT };
+  if (last && last.intent === 'scroll') {
+    const amtFromT = resolveAmount(t);
+    if (amtFromT !== null) {
+      return { intent: 'scroll', direction: last.direction || 'down', amount: amtFromT };
+    }
   }
 
   return null; // not a follow-up
