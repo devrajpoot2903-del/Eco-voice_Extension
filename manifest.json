@@ -26,6 +26,9 @@
     "activeTab",
     "tabs"
   ],
+  "host_permissions": [
+    "https://api.groq.com/*"
+  ],
   "web_accessible_resources": [
     {
       "resources": [

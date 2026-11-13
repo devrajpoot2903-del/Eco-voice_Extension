@@ -2,8 +2,126 @@
  * background.js — EcoVoice Extension Service Worker
  *
  * Handles tab management commands forwarded from ActionEngine,
- * plus extension lifecycle events.
+ * LLM fallback parsing via Groq, plus extension lifecycle events.
  */
+
+// ── LLM Service Configuration (Phase 3) ───────────────────────────────────────
+
+const GROQ_MODEL = 'openai/gpt-oss-20b'; // alternative: 'openai/gpt-oss-120b'
+const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
+
+const SYSTEM_PROMPT = "You convert ONE spoken browser command into ONE JSON object. The text comes from speech recognition: it may contain mishearings and Hindi/Hinglish. Output ONLY the JSON object, no prose, no markdown. If the text is not clearly a browser action, output {\"intent\":\"unknown\"}. Never invent a target the user did not imply. Allowed outputs: {intent:scroll,direction}, {intent:click|open|double-click|right-click|hover|scroll-into-view,target}, {intent:type,target,value}, {intent:navigate,action:back|forward|reload|home}, {intent:tab,action:new|close|next|previous}, {intent:zoom-in|zoom-out|zoom-reset|copy|paste|cut|undo|redo|select-all|read|help}, {intent:search,query}, {intent:unknown}. Examples: 'take me to the cart' -> {\"intent\":\"click\",\"target\":\"cart\"}; 'neeche jao' -> {\"intent\":\"scroll\",\"direction\":\"down\"}; 'peeche jao' -> {\"intent\":\"navigate\",\"action\":\"back\"}; 'what is the weather' -> {\"intent\":\"unknown\"}.";
+
+/**
+ * Strict validator for LLM command outputs.
+ * Whitelists allowed intents/properties and prevents prototype or injection payloads.
+ *
+ * @param {any} obj - Parsed JSON candidate
+ * @returns {Object} Validated command or { intent: 'unknown', type: 'UNKNOWN' }
+ */
+function validateLlmCommand(obj) {
+  const UNKNOWN = { intent: 'unknown', type: 'UNKNOWN' };
+  if (!obj || typeof obj !== 'object' || typeof obj.intent !== 'string') {
+    return UNKNOWN;
+  }
+
+  const intent = obj.intent.trim().toLowerCase();
+
+  // 1. Scroll
+  if (intent === 'scroll') {
+    const validDirs = ['up', 'down', 'left', 'right', 'top', 'bottom', 'page-up', 'page-down'];
+    if (typeof obj.direction === 'string') {
+      const dir = obj.direction.trim().toLowerCase();
+      if (validDirs.includes(dir)) {
+        return { intent: 'scroll', direction: dir };
+      }
+    }
+    return UNKNOWN;
+  }
+
+  // 2. Click / Open / Double-Click / Right-Click / Hover / Scroll-into-view
+  const clickTypeIntents = ['click', 'open', 'double-click', 'right-click', 'hover', 'scroll-into-view'];
+  if (clickTypeIntents.includes(intent)) {
+    if (typeof obj.target === 'string') {
+      const target = obj.target.trim().toLowerCase().slice(0, 80);
+      if (target.length > 0) {
+        return { intent, target };
+      }
+    }
+    return UNKNOWN;
+  }
+
+  // 3. Type
+  if (intent === 'type') {
+    let target = null;
+    if (typeof obj.target === 'string') {
+      target = obj.target.trim().toLowerCase().slice(0, 80);
+    } else if (obj.target !== null && obj.target !== undefined) {
+      return UNKNOWN;
+    }
+    if (typeof obj.value === 'string') {
+      const value = obj.value.slice(0, 200);
+      if (value.trim().length > 0) {
+        return { intent: 'type', target, value };
+      }
+    }
+    return UNKNOWN;
+  }
+
+  // 4. Navigate
+  if (intent === 'navigate') {
+    const validNavActions = ['back', 'forward', 'reload', 'home'];
+    if (typeof obj.action === 'string') {
+      const act = obj.action.trim().toLowerCase();
+      if (validNavActions.includes(act)) {
+        return { intent: 'navigate', action: act };
+      }
+    }
+    return UNKNOWN;
+  }
+
+  // 5. Tab
+  if (intent === 'tab') {
+    const validTabActions = ['new', 'close', 'next', 'previous'];
+    if (typeof obj.action === 'string') {
+      const act = obj.action.trim().toLowerCase();
+      if (validTabActions.includes(act)) {
+        return { intent: 'tab', action: act };
+      }
+    }
+    return UNKNOWN;
+  }
+
+  // 6. Parameterless browser actions
+  const simpleIntents = [
+    'zoom-in', 'zoom-out', 'zoom-reset',
+    'copy', 'paste', 'cut',
+    'undo', 'redo',
+    'select-all', 'read'
+  ];
+  if (simpleIntents.includes(intent)) {
+    return { intent };
+  }
+
+  // 7. Help
+  if (intent === 'help') {
+    return { intent: 'help', type: 'SHOW_HELP' };
+  }
+
+  // 8. Search -> normalized to Google navigation
+  if (intent === 'search') {
+    if (typeof obj.query === 'string' && obj.query.trim().length > 0) {
+      return {
+        intent: 'navigate',
+        action: 'url',
+        url: 'https://www.google.com/search?q=' + encodeURIComponent(obj.query.trim())
+      };
+    }
+    return UNKNOWN;
+  }
+
+  return UNKNOWN;
+}
 
 // ── Tab Management (Phase 5A) ──────────────────────────────────────────────────
 
@@ -47,6 +165,97 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok: true });
     });
   });
+
+  return true; // async response
+});
+
+// ── LLM Fallback Parser (Phase 3) ──────────────────────────────────────────────
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type !== 'LLM_PARSE') return;
+
+  (async () => {
+    const startTime = Date.now();
+    let controller = null;
+    let timeoutId = null;
+
+    try {
+      const storage = await chrome.storage.local.get('groq_api_key');
+      const apiKey = storage?.groq_api_key;
+      if (!apiKey) {
+        sendResponse({ ok: false, error: 'NO_KEY' });
+        return;
+      }
+
+      controller = new AbortController();
+      timeoutId = setTimeout(() => controller.abort(), 8000);
+
+      const response = await fetch(GROQ_URL, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: GROQ_MODEL,
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'user', content: String(message.text || '') }
+          ],
+          temperature: 0.1,
+          max_tokens: 1024,
+          reasoning_effort: 'low'
+        }),
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+      const latency = Date.now() - startTime;
+
+      if (!response.ok) {
+        const errText = await response.text();
+        console.error(`[EcoVoice LLM] HTTP error: status=${response.status}, model=${GROQ_MODEL}, latency=${latency}ms, body=${errText.slice(0, 300)}`);
+        sendResponse({ ok: false, error: `HTTP_${response.status}` });
+        return;
+      }
+
+      const resJson = await response.json();
+      let rawContent = resJson.choices?.[0]?.message?.content || '';
+
+      // Strip ``` fences
+      rawContent = rawContent.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+
+      // Extract JSON substring from first '{' to last '}'
+      const firstBrace = rawContent.indexOf('{');
+      const lastBrace = rawContent.lastIndexOf('}');
+      if (firstBrace === -1 || lastBrace === -1 || lastBrace < firstBrace) {
+        console.warn(`[EcoVoice LLM] No JSON object found in response: model=${GROQ_MODEL}, latency=${latency}ms`);
+        sendResponse({ ok: false, error: 'INVALID_JSON' });
+        return;
+      }
+
+      let parsedObj;
+      try {
+        parsedObj = JSON.parse(rawContent.slice(firstBrace, lastBrace + 1));
+      } catch (jsonErr) {
+        console.warn(`[EcoVoice LLM] JSON parse failure: model=${GROQ_MODEL}, latency=${latency}ms`, jsonErr);
+        sendResponse({ ok: false, error: 'JSON_PARSE_ERROR' });
+        return;
+      }
+
+      const validatedCommand = validateLlmCommand(parsedObj);
+      console.log(`[EcoVoice LLM] model=${GROQ_MODEL}, status=${response.status}, latency=${latency}ms, command=`, validatedCommand);
+      sendResponse({ ok: true, command: validatedCommand });
+
+    } catch (err) {
+      if (timeoutId) clearTimeout(timeoutId);
+      const latency = Date.now() - startTime;
+      const isTimeout = err.name === 'AbortError';
+      const errorMsg = isTimeout ? 'TIMEOUT' : (err.message || 'UNKNOWN_ERROR');
+      console.error(`[EcoVoice LLM] Request failed: model=${GROQ_MODEL}, latency=${latency}ms, error=${errorMsg}`);
+      sendResponse({ ok: false, error: errorMsg });
+    }
+  })();
 
   return true; // async response
 });

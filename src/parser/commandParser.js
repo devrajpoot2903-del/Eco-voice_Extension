@@ -141,7 +141,7 @@ const INTENT_RULES = [
   {
     intent: 'SCROLL_INTO_VIEW',
     patterns: [
-      /^(?:scroll\s+to|bring\s+into\s+view|show|find\s+and\s+show)\s+(.+)$/i,
+      /^(?:scroll\s+to(?!\s+(?:the\s+)?(?:top|bottom|up|down|left|right|beginning|end|start|finish)$)|bring\s+into\s+view|find\s+and\s+show)\s+(.+)$/i,
     ]
   },
   {
@@ -344,7 +344,7 @@ export function parseCommand(rawText) {
   }
   if (intent === 'SELECT_ALL') return { intent: 'select-all' };
   if (intent === 'SCROLL_INTO_VIEW') {
-    const m = text.match(/^(?:scroll\s+to|bring\s+into\s+view|show|find\s+and\s+show)\s+(.+)$/i);
+    const m = text.match(/^(?:scroll\s+to(?!\s+(?:the\s+)?(?:top|bottom|up|down|left|right|beginning|end|start|finish)$)|bring\s+into\s+view|find\s+and\s+show)\s+(.+)$/i);
     return { intent: 'scroll-into-view', target: m ? m[1].toLowerCase() : '' };
   }
   if (intent === 'WINDOW_FOCUS') return { intent: 'window-focus' };

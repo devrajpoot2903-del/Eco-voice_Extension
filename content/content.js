@@ -15,6 +15,7 @@ let _resolveFollowUp = null;
 let _updateContext   = null;
 let _parseCommand    = null;
 let _speakText       = null;
+let _llmBusy         = false;
 
 // ─── Decision Engine — Phase 1: Pending action state machine ─────────────────
 // Module-level state: NEVER placed on window or in the DOM.
@@ -489,6 +490,18 @@ function dispatchAction(command) {
   let result = '';
 
   switch (command.intent) {
+    // Help
+    case 'help':
+    case 'HELP': {
+      updateHUDResult('Help');
+      if (_speakText) {
+        (async () => {
+          await _speakText("You can say: scroll down, scroll up, click and a name, go back, zoom in, open new tab, or read page.");
+        })();
+      }
+      return;
+    }
+
     // Conversational Follow-up (Phase 6)
     case 'CLARIFY':
     case 'clarify': {
@@ -782,6 +795,46 @@ function injectHUD() {
 // Expose for navigationManager
 window.ecoVoiceInjectHUD = injectHUD;
 
+// ─── LLM Fallback (Phase 3) ───────────────────────────────────────────────────
+
+async function handleUnknownWithLLM(text) {
+  if (_llmBusy) {
+    console.log('[EcoVoice LLM] busy, ignoring utterance');
+    return;
+  }
+
+  const startUrl = location.href;
+  _llmBusy = true;
+  updateHUDResult('🤖 Asking AI...');
+
+  let res = null;
+  try {
+    res = await chrome.runtime.sendMessage({ type: 'LLM_PARSE', text });
+  } catch (err) {
+    console.error('[EcoVoice LLM] Message sending failed:', err);
+    res = { ok: false, error: err.message };
+  } finally {
+    _llmBusy = false;
+  }
+
+  // Discard the result if context changed while waiting
+  if (sessionStorage.getItem('ecovoice_active') !== 'true' || location.href !== startUrl || _pendingAction !== null) {
+    console.log('[EcoVoice LLM] Result discarded: context changed or inactive');
+    return;
+  }
+
+  if (res && res.ok && res.command && res.command.intent !== 'unknown') {
+    updateHUDJson(res.command);
+    dispatchAction(res.command);
+  } else {
+    updateHUDJson({ intent: 'unknown', type: 'UNKNOWN' });
+    dispatchAction({ intent: 'unknown', type: 'UNKNOWN' });
+    if (res && res.error === 'NO_KEY') {
+      updateHUDResult('AI key not set');
+    }
+  }
+}
+
 // ─── Runtime (dynamic imports) ────────────────────────────────────────────────
 
 window.ecoVoiceSR = null;
@@ -860,8 +913,12 @@ async function initRuntime() {
         let parsed = _resolveFollowUp ? _resolveFollowUp(text) : null;
         if (!parsed) parsed = _parseCommand(text);
 
-        updateHUDJson(parsed);
-        dispatchAction(parsed);
+        if (parsed && parsed.intent !== 'unknown') {
+          updateHUDJson(parsed);
+          dispatchAction(parsed);
+        } else {
+          handleUnknownWithLLM(text);
+        }
 
         // Only schedule restart if the command was NOT an explicit user-stop.
         const isExplicitStop = (parsed && parsed.intent === 'stop');
