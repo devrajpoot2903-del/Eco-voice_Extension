@@ -10,7 +10,7 @@
 const GROQ_MODEL = 'openai/gpt-oss-20b'; // alternative: 'openai/gpt-oss-120b'
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
-const SYSTEM_PROMPT = "You convert ONE spoken browser command into ONE JSON object. The text comes from speech recognition: it may contain mishearings and Hindi/Hinglish. Output ONLY the JSON object, no prose, no markdown. If the text is not clearly a browser action, output {\"intent\":\"unknown\"}. Never invent a target the user did not imply. Allowed outputs: {intent:scroll,direction}, {intent:click|open|double-click|right-click|hover|scroll-into-view,target}, {intent:type,target,value}, {intent:navigate,action:back|forward|reload|home}, {intent:tab,action:new|close|next|previous}, {intent:zoom-in|zoom-out|zoom-reset|copy|paste|cut|undo|redo|select-all|read|help}, {intent:search,query}, {intent:unknown}. Examples: 'take me to the cart' -> {\"intent\":\"click\",\"target\":\"cart\"}; 'neeche jao' -> {\"intent\":\"scroll\",\"direction\":\"down\"}; 'peeche jao' -> {\"intent\":\"navigate\",\"action\":\"back\"}; 'what is the weather' -> {\"intent\":\"unknown\"}.";
+const SYSTEM_PROMPT = "You convert ONE spoken browser command into ONE JSON object. The text comes from speech recognition: it may contain mishearings and Hindi/Hinglish. Output ONLY the JSON object, no prose, no markdown. If the text is not clearly a browser action, output {\"intent\":\"unknown\"}. Never invent a target the user did not imply. If the text is clearly a browser action but a required piece is missing or vague (e.g. click/open with only 'it', 'this', 'that', 'the button', 'the link', no name), output {\"intent\":\"clarify\",\"message\":\"<one short question, max 12 words, ALWAYS in simple English>\"}. Clarify ONLY for incomplete browser actions. Chit-chat or unrelated questions -> {\"intent\":\"unknown\"}, never clarify. If a previous question and the user's answer are present, combine them into ONE complete command. If the answer is itself a new complete command, ignore the earlier request and output the new command. If the answer is still unusable, output unknown (do not ask a second question about the same thing). Allowed outputs: {intent:scroll,direction}, {intent:click|open|double-click|right-click|hover|scroll-into-view,target}, {intent:type,target,value}, {intent:navigate,action:back|forward|reload|home}, {intent:tab,action:new|close|next|previous}, {intent:zoom-in|zoom-out|zoom-reset|copy|paste|cut|undo|redo|select-all|read|help}, {intent:search,query}, {intent:clarify,message}, {intent:unknown}. Examples: 'take me to the cart' -> {\"intent\":\"click\",\"target\":\"cart\"}; 'neeche jao' -> {\"intent\":\"scroll\",\"direction\":\"down\"}; 'peeche jao' -> {\"intent\":\"navigate\",\"action\":\"back\"}; 'sabse niche jao' / 'page ke end tak jao' -> {\"intent\":\"scroll\",\"direction\":\"bottom\"}; 'sabse upar jao' / 'sabse oopar jao' -> {\"intent\":\"scroll\",\"direction\":\"top\"}; 'wapas jao' -> {\"intent\":\"navigate\",\"action\":\"back\"}; 'naya tab kholo' -> {\"intent\":\"tab\",\"action\":\"new\"}; 'zoom badhao' -> {\"intent\":\"zoom-in\"}; 'zoom kam karo' -> {\"intent\":\"zoom-out\"}; 'page padho' / 'page padh ke sunao' -> {\"intent\":\"read\"}; 'madad karo' -> {\"intent\":\"help\"}; 'click it' -> {\"intent\":\"clarify\",\"message\":\"Which button or link should I click?\"}; 'what is the weather' -> {\"intent\":\"unknown\"}.";
 
 /**
  * Strict validator for LLM command outputs.
@@ -120,6 +120,17 @@ function validateLlmCommand(obj) {
     return UNKNOWN;
   }
 
+  // 9. Clarify
+  if (intent === 'clarify') {
+    if (typeof obj.message === 'string') {
+      const msg = obj.message.replace(/\s+/g, ' ').trim().slice(0, 120);
+      if (msg.length > 0) {
+        return { intent: 'clarify', type: 'CLARIFY', message: msg };
+      }
+    }
+    return UNKNOWN;
+  }
+
   return UNKNOWN;
 }
 
@@ -190,6 +201,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       controller = new AbortController();
       timeoutId = setTimeout(() => controller.abort(), 8000);
 
+      let historyMessages = [];
+      if (message.history && typeof message.history === 'object') {
+        const orig = typeof message.history.originalText === 'string'
+          ? message.history.originalText.trim().slice(0, 200)
+          : '';
+        const q = typeof message.history.question === 'string'
+          ? message.history.question.trim().slice(0, 200)
+          : '';
+        if (orig.length > 0 && q.length > 0) {
+          historyMessages = [
+            { role: 'user', content: orig },
+            { role: 'assistant', content: JSON.stringify({ intent: 'clarify', message: q }) }
+          ];
+        }
+      }
+
       const response = await fetch(GROQ_URL, {
         method: 'POST',
         headers: {
@@ -200,6 +227,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           model: GROQ_MODEL,
           messages: [
             { role: 'system', content: SYSTEM_PROMPT },
+            ...historyMessages,
             { role: 'user', content: String(message.text || '') }
           ],
           temperature: 0.1,

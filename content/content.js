@@ -16,6 +16,17 @@ let _updateContext   = null;
 let _parseCommand    = null;
 let _speakText       = null;
 let _llmBusy         = false;
+let _clarifyState    = null; // {originalText, question, round, url, timerId}
+
+function clearClarifyState() {
+  if (_clarifyState) {
+    if (_clarifyState.timerId) {
+      clearTimeout(_clarifyState.timerId);
+      _clarifyState.timerId = null;
+    }
+    _clarifyState = null;
+  }
+}
 
 // ─── Decision Engine — Phase 1: Pending action state machine ─────────────────
 // Module-level state: NEVER placed on window or in the DOM.
@@ -757,6 +768,9 @@ function injectHUD() {
     sessionStorage.setItem('ev-hud-x', _xOff);
     sessionStorage.setItem('ev-hud-y', _yOff);
   });
+  window.addEventListener('pagehide', () => {
+    clearClarifyState();
+  });
 
   // Collapse panel toggle.
   document.getElementById('ev-collapse').addEventListener('click', () => {
@@ -765,6 +779,7 @@ function injectHUD() {
 
   // Fix 3b: Close (cross) button — stop mic before hiding so the loop fully terminates.
   document.getElementById('ev-hide').addEventListener('click', () => {
+    clearClarifyState();
     clearPendingAction();
     if (window.ecoVoiceSR) window.ecoVoiceSR.stop();  // forces state → IDLE, kills restart timer
     sessionStorage.setItem('ecovoice_active', 'false');
@@ -782,6 +797,7 @@ function injectHUD() {
 
   // Fix 3a: Dedicated Stop button — halts mic and marks session inactive.
   document.getElementById('ev-stop-btn').addEventListener('click', () => {
+    clearClarifyState();
     clearPendingAction();
     if (window.ecoVoiceSR) window.ecoVoiceSR.stop();
     sessionStorage.setItem('ecovoice_active', 'false');
@@ -795,9 +811,25 @@ function injectHUD() {
 // Expose for navigationManager
 window.ecoVoiceInjectHUD = injectHUD;
 
-// ─── LLM Fallback (Phase 3) ───────────────────────────────────────────────────
+// ─── LLM Fallback & Clarification (Phase 3 & 4) ───────────────────────────────
 
-async function handleUnknownWithLLM(text) {
+async function askClarification(originalText, question, round) {
+  _clarifyState = { originalText, question, round, url: location.href, timerId: null };
+  updateHUDResult('❓ ' + question);
+  updateHUDJson({ intent: 'clarify', message: question });
+  if (_speakText) {
+    await _speakText(question);
+  }
+  if (_clarifyState) {
+    if (_clarifyState.timerId) clearTimeout(_clarifyState.timerId);
+    _clarifyState.timerId = setTimeout(() => {
+      clearClarifyState();
+      updateHUDResult('Clarification expired');
+    }, 20000);
+  }
+}
+
+async function handleUnknownWithLLM(text, history = null) {
   if (_llmBusy) {
     console.log('[EcoVoice LLM] busy, ignoring utterance');
     return;
@@ -809,7 +841,9 @@ async function handleUnknownWithLLM(text) {
 
   let res = null;
   try {
-    res = await chrome.runtime.sendMessage({ type: 'LLM_PARSE', text });
+    const payload = { type: 'LLM_PARSE', text };
+    if (history) payload.history = history;
+    res = await chrome.runtime.sendMessage(payload);
   } catch (err) {
     console.error('[EcoVoice LLM] Message sending failed:', err);
     res = { ok: false, error: err.message };
@@ -820,19 +854,89 @@ async function handleUnknownWithLLM(text) {
   // Discard the result if context changed while waiting
   if (sessionStorage.getItem('ecovoice_active') !== 'true' || location.href !== startUrl || _pendingAction !== null) {
     console.log('[EcoVoice LLM] Result discarded: context changed or inactive');
+    clearClarifyState();
     return;
   }
 
-  if (res && res.ok && res.command && res.command.intent !== 'unknown') {
-    updateHUDJson(res.command);
-    dispatchAction(res.command);
-  } else {
-    updateHUDJson({ intent: 'unknown', type: 'UNKNOWN' });
-    dispatchAction({ intent: 'unknown', type: 'UNKNOWN' });
-    if (res && res.error === 'NO_KEY') {
-      updateHUDResult('AI key not set');
+  if (res && res.ok && res.command) {
+    if (res.command.intent === 'clarify') {
+      const round = (history && typeof history.round === 'number' ? history.round : 0) + 1;
+      if (round > 2) {
+        clearClarifyState();
+        updateHUDResult("Couldn't understand");
+        if (_speakText) {
+          await _speakText("Sorry, I couldn't understand. Please try again.");
+        }
+        return;
+      } else {
+        const originalText = history ? history.originalText : text;
+        await askClarification(originalText, res.command.message, round);
+        return;
+      }
+    } else if (res.command.intent !== 'unknown') {
+      clearClarifyState();
+      updateHUDJson(res.command);
+      dispatchAction(res.command);
+      return;
     }
   }
+
+  // Fallback for unknown / failed
+  clearClarifyState();
+  updateHUDJson({ intent: 'unknown', type: 'UNKNOWN' });
+  dispatchAction({ intent: 'unknown', type: 'UNKNOWN' });
+  if (res && res.error === 'NO_KEY') {
+    updateHUDResult('AI key not set');
+  }
+}
+
+function executeNormalUtterance(text) {
+  let parsed = _resolveFollowUp ? _resolveFollowUp(text) : null;
+  if (!parsed) parsed = _parseCommand(text);
+
+  const PRONOUN_TARGETS = ['it', 'this', 'that', 'this one', 'that one', 'there', 'one', 'isko', 'usko', 'ise', 'use'];
+  const isClickFamily = parsed && ['click', 'open', 'double-click', 'right-click', 'hover'].includes(parsed.intent);
+  const isVagueTarget = isClickFamily && typeof parsed.target === 'string' && PRONOUN_TARGETS.includes(parsed.target.trim().toLowerCase());
+
+  if (parsed && parsed.intent !== 'unknown' && !isVagueTarget) {
+    updateHUDJson(parsed);
+    dispatchAction(parsed);
+  } else {
+    handleUnknownWithLLM(text);
+  }
+  return parsed;
+}
+
+async function handleClarifyAnswer(text) {
+  if (!_clarifyState) return;
+
+  if (_clarifyState.timerId) {
+    clearTimeout(_clarifyState.timerId);
+    _clarifyState.timerId = null;
+  }
+
+  if (location.href !== _clarifyState.url) {
+    clearClarifyState();
+    executeNormalUtterance(text);
+    return;
+  }
+
+  const CANCEL_PATTERN = /^(cancel|never\s*mind|nevermind|forget\s+it|stop|no|nahi|rehne\s+do|chhod\s+do)$/i;
+  if (CANCEL_PATTERN.test((text || '').trim())) {
+    clearClarifyState();
+    updateHUDResult('Cancelled');
+    if (_speakText) {
+      await _speakText("Okay.");
+    }
+    return;
+  }
+
+  const h = {
+    originalText: _clarifyState.originalText,
+    question: _clarifyState.question,
+    round: _clarifyState.round
+  };
+  await handleUnknownWithLLM(text, h);
 }
 
 // ─── Runtime (dynamic imports) ────────────────────────────────────────────────
@@ -875,6 +979,7 @@ async function initRuntime() {
         // run. This prevents the task parser from hallucinating them as CREATE_TASK.
         const lower = text.toLowerCase().trim();
         if (/^(stop listening|cancel listening|halt listening|stop ecovoice|disable listening|turn off listening)$/.test(lower)) {
+          clearClarifyState();
           if (_pendingAction) {
             console.log('[EcoVoice Decision] cancelled: stop listening command');
             clearPendingAction();
@@ -909,15 +1014,12 @@ async function initRuntime() {
         }
         // ── End pending action reply gate ─────────────────────────────────────
 
-        // Try follow-up resolution first
-        let parsed = _resolveFollowUp ? _resolveFollowUp(text) : null;
-        if (!parsed) parsed = _parseCommand(text);
-
-        if (parsed && parsed.intent !== 'unknown') {
-          updateHUDJson(parsed);
-          dispatchAction(parsed);
+        // ── Clarify-answer gate & utterance execution ─────────────────────────
+        let parsed = null;
+        if (_clarifyState) {
+          handleClarifyAnswer(text);
         } else {
-          handleUnknownWithLLM(text);
+          parsed = executeNormalUtterance(text);
         }
 
         // Only schedule restart if the command was NOT an explicit user-stop.
@@ -983,6 +1085,7 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage)
       initRuntime();
     }
     if (message.type === 'ECOVOICE_STOP_FROM_HUD') {
+      clearClarifyState();
       clearPendingAction();
       if (window.ecoVoiceSR) window.ecoVoiceSR.stop();
       sessionStorage.setItem('ecovoice_active', 'false');

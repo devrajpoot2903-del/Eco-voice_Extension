@@ -86,11 +86,11 @@ const INTENT_RULES = [
   // ── BROWSER CAPABILITIES ──
   {
     intent: 'DOUBLE_CLICK',
-    patterns: [ /^(?:double.?click|double.?tap)\s+(.+)$/i ]
+    patterns: [/^(?:double.?click|double.?tap)\s+(.+)$/i]
   },
   {
     intent: 'RIGHT_CLICK',
-    patterns: [ /^(?:right.?click|context\s+menu)(?:\s+on)?\s+(.+)$/i ]
+    patterns: [/^(?:right.?click|context\s+menu)(?:\s+on)?\s+(.+)$/i]
   },
   {
     intent: 'TYPE',
@@ -100,31 +100,31 @@ const INTENT_RULES = [
   },
   {
     intent: 'ZOOM_IN',
-    patterns: [ /^zoom\s+in$/i, /^(?:make\s+(?:it\s+)?)?bigger$/i ]
+    patterns: [/^zoom\s+in$/i, /^(?:make\s+(?:it\s+)?)?bigger$/i]
   },
   {
     intent: 'ZOOM_OUT',
-    patterns: [ /^zoom\s+out$/i, /^(?:make\s+(?:it\s+)?)?smaller$/i ]
+    patterns: [/^zoom\s+out$/i, /^(?:make\s+(?:it\s+)?)?smaller$/i]
   },
   {
     intent: 'ZOOM_RESET',
-    patterns: [ /^(?:reset\s+zoom|zoom\s+reset|normal\s+zoom)$/i ]
+    patterns: [/^(?:reset\s+zoom|zoom\s+reset|normal\s+zoom)$/i]
   },
   {
     intent: 'COPY',
-    patterns: [ /^copy(?:\s+that)?$/i, /^(?:copy\s+selection|copy\s+text)$/i ]
+    patterns: [/^copy(?:\s+that)?$/i, /^(?:copy\s+selection|copy\s+text)$/i]
   },
   {
     intent: 'PASTE',
-    patterns: [ /^paste(?:\s+that)?$/i, /^(?:paste\s+here|paste\s+it)$/i ]
+    patterns: [/^paste(?:\s+that)?$/i, /^(?:paste\s+here|paste\s+it)$/i]
   },
   {
     intent: 'CUT',
-    patterns: [ /^cut(?:\s+that)?$/i, /^(?:cut\s+selection|cut\s+text)$/i ]
+    patterns: [/^cut(?:\s+that)?$/i, /^(?:cut\s+selection|cut\s+text)$/i]
   },
   {
     intent: 'REDO',
-    patterns: [ /^redo$/i, /^redo\s+(last|that|it)$/i ]
+    patterns: [/^redo$/i, /^redo\s+(last|that|it)$/i]
   },
   {
     intent: 'KEYBOARD',
@@ -154,6 +154,8 @@ const INTENT_RULES = [
   {
     intent: 'SCROLL',
     patterns: [
+      /^(?:sabse\s+(?:niche|neeche)|page\s+ke\s+(?:end|neeche)\s+tak|bilkul\s+(?:niche|neeche))\s+jao$/i,
+      /^(?:sabse\s+(?:upar|oopar)|page\s+ke\s+(?:top|upar)\s+tak)\s+jao$/i,
       /^(?:scroll|move|slide|travel)\s+(?:to\s+)?(up|down|bottom|top|left|right)$/i,
       /^(?:go\s*down|godown)$/i,
       /^(?:go\s*up|goup)$/i,
@@ -328,13 +330,13 @@ export function parseCommand(rawText) {
     const m = text.match(/^(?:type|write|enter|input)\s+(?:in(?:to)?\s+(.+?)\s+)?["']?(.+)["']?$/i);
     return { intent: 'type', target: m && m[1] ? m[1] : null, value: m ? (m[2] || m[1] || '') : text };
   }
-  if (intent === 'ZOOM_IN')    return { intent: 'zoom-in' };
-  if (intent === 'ZOOM_OUT')   return { intent: 'zoom-out' };
+  if (intent === 'ZOOM_IN') return { intent: 'zoom-in' };
+  if (intent === 'ZOOM_OUT') return { intent: 'zoom-out' };
   if (intent === 'ZOOM_RESET') return { intent: 'zoom-reset' };
-  if (intent === 'COPY')  return { intent: 'copy' };
+  if (intent === 'COPY') return { intent: 'copy' };
   if (intent === 'PASTE') return { intent: 'paste' };
-  if (intent === 'CUT')   return { intent: 'cut' };
-  if (intent === 'REDO')  return { intent: 'redo' };
+  if (intent === 'CUT') return { intent: 'cut' };
+  if (intent === 'REDO') return { intent: 'redo' };
 
   if (intent === 'KEYBOARD') {
     const m = text.match(/^(?:press|hit|type key)\s+(.+)$/i);
@@ -351,6 +353,12 @@ export function parseCommand(rawText) {
 
   // ── Scroll ─────────────────────────────────────────────────────────────────
   if (intent === 'SCROLL') {
+    if (/^(?:sabse\s+(?:niche|neeche)|page\s+ke\s+(?:end|neeche)\s+tak|bilkul\s+(?:niche|neeche))\s+jao$/i.test(text)) {
+      return { intent: 'scroll', direction: 'bottom' };
+    }
+    if (/^(?:sabse\s+(?:upar|oopar)|page\s+ke\s+(?:top|upar)\s+tak)\s+jao$/i.test(text)) {
+      return { intent: 'scroll', direction: 'top' };
+    }
     if (/^(?:go\s*down|godown)$/i.test(text)) return { intent: 'scroll', direction: 'down' };
     if (/^(?:go\s*up|goup)$/i.test(text)) return { intent: 'scroll', direction: 'up' };
     if (/^(?:go\s*left|goleft)$/i.test(text)) return { intent: 'scroll', direction: 'left' };
@@ -413,8 +421,8 @@ export function parseCommand(rawText) {
   // ── Kept System Intents ────────────────────────────────────────────────────
   if (intent === 'UNDO') return { intent: 'undo', type: 'UNDO' };
   if (intent === 'ENTER_CHAT_MODE') return { intent: 'chat-mode', type: 'ENTER_CHAT_MODE', action: 'enter' };
-  if (intent === 'EXIT_CHAT_MODE')  return { intent: 'chat-mode', type: 'EXIT_CHAT_MODE', action: 'exit' };
-  if (intent === 'SELF_INTRO')      return { intent: 'self-intro', type: 'SELF_INTRO' };
+  if (intent === 'EXIT_CHAT_MODE') return { intent: 'chat-mode', type: 'EXIT_CHAT_MODE', action: 'exit' };
+  if (intent === 'SELF_INTRO') return { intent: 'self-intro', type: 'SELF_INTRO' };
 
   return { intent: 'unknown', type: 'UNKNOWN' };
 }
